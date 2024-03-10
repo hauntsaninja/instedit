@@ -4,7 +4,6 @@ import argparse
 import functools
 import importlib.metadata
 import os
-import random
 import re
 import shlex
 import shutil
@@ -97,7 +96,47 @@ def get_purelib(python: str) -> str:
     return os.path.join(base, "lib", pyname, "site-packages")
 
 
-def make_metadata(proj: Project, metadata_file: str) -> None:
+def make_pth(proj: Project, python: str) -> list[tuple[str, int]]:
+    pth = os.path.join(get_purelib(python), proj.canonical_name + ".pth")
+    contents = proj.path + "\n"
+    with open(pth, "w") as f:
+        f.write(contents)
+    return [(pth, len(contents))]
+
+
+def make_entry_points(proj: Project, python: str) -> list[tuple[str, int]]:
+    # https://setuptools.pypa.io/en/latest/userguide/entry_point.html#console-scripts
+    assert len(python) < 100 and " " not in python
+    shebang = f"#!{python}"
+
+    ret = []
+    for script_name, entry in proj.project.get("scripts", {}).items():
+        prefix, suffix = entry.split(":", 1)
+        module = prefix
+        import_name = suffix.split(".")[0]
+        func = suffix
+        contents = rf"""{shebang}
+# -*- coding: utf-8 -*-
+import re
+import sys
+from {module} import {import_name}
+if __name__ == '__main__':
+    sys.argv[0] = re.sub(r'(-script\.pyw|\.exe)?$', '', sys.argv[0])
+    sys.exit({func}())
+"""
+        script = os.path.join(get_bin(python), script_name)
+        try:
+            os.unlink(script)
+        except FileNotFoundError:
+            pass
+        with open(script, "w") as f:
+            f.write(contents)
+        os.chmod(script, (os.stat(script).st_mode | 0o555) & 0o7777)
+        ret.append((script, len(contents)))
+    return ret
+
+
+def make_metadata(proj: Project, metadata_dir: str) -> list[tuple[str, int]]:
     # https://packaging.python.org/en/latest/specifications/core-metadata/
     # See PEP 685, 643, PEP 566, PEP 426, PEP 345, PEP 314, PEP 241
 
@@ -121,11 +160,13 @@ def make_metadata(proj: Project, metadata_file: str) -> None:
             contents.append(f"Requires-Dist: [{extra}] {req}")
     contents.append("\nUNKNOWN BODY\n")
 
-    with open(metadata_file, "w") as f:
-        f.write("\n".join(contents))
+    contents_str = "\n".join(contents) + "\n"
+    with open(os.path.join(metadata_dir, "METADATA"), "w") as f:
+        f.write(contents_str)
+    return [(os.path.join(metadata_dir, "METADATA"), len(contents_str))]
 
 
-def make_entry_points_txt(proj: Project, metadata_dir: str) -> None:
+def make_entry_points_txt(proj: Project, metadata_dir: str) -> list[tuple[str, int]]:
     # https://packaging.python.org/en/latest/specifications/entry-points/
     contents = []
     if scripts := proj.project.get("scripts"):
@@ -146,9 +187,11 @@ def make_entry_points_txt(proj: Project, metadata_dir: str) -> None:
     if contents:
         with open(os.path.join(metadata_dir, "entry_points.txt"), "w") as f:
             f.write("".join(contents))
+        return [(os.path.join(metadata_dir, "entry_points.txt"), len(contents))]
+    return []
 
 
-def make_top_level_txt(proj: Project, metadata_dir: str) -> None:
+def make_top_level_txt(proj: Project, metadata_dir: str) -> list[tuple[str, int]]:
     # See:
     # setuptools.command.egg_info.write_toplevel_names
     # setuptools.dist.iter_distribution_names
@@ -160,103 +203,68 @@ def make_top_level_txt(proj: Project, metadata_dir: str) -> None:
         stem, ext = os.path.splitext(p)
         if ext in {".py", ".so"}:
             contents.append(stem)
+    contents_str = "\n".join(contents) + "\n"
     with open(os.path.join(metadata_dir, "top_level.txt"), "w") as f:
-        f.write("\n".join(contents))
+        f.write(contents_str)
+    return [(os.path.join(metadata_dir, "top_level.txt"), len(contents_str))]
 
 
-def make_requires_txt(proj: Project, egg_info: str) -> None:
-    # egg info's requires.txt isn't quite PEP 508 compliant, maybe that's concerning
-    contents = ["\n".join(proj.project.get("dependencies", []))]
-    for extra, deps in proj.project.get("optional-dependencies", {}).items():
-        contents.append(f"[{extra}]\n" + "\n".join(deps))
-
-    with open(os.path.join(egg_info, "requires.txt"), "w") as f:
-        f.write("\n\n".join(contents) + "\n")
+def make_installer(proj: Project, metadata_dir: str) -> list[tuple[str, int]]:
+    # https://packaging.python.org/en/latest/specifications/recording-installed-packages/#the-installer-file
+    contents = "instedit"
+    with open(os.path.join(metadata_dir, "INSTALLER"), "w") as f:
+        f.write(contents)
+    return [(os.path.join(metadata_dir, "INSTALLER"), len(contents))]
 
 
-def make_egg_info(proj: Project) -> None:
-    # https://setuptools.pypa.io/en/latest/deprecated/python_eggs.html
-
-    # Based on pkg_resources.to_filename (yes, this is different from canonical_name)
-    egg_info_name = f"{proj.name.replace('-', '_')}.egg-info"
-    egg_info = os.path.join(proj.path, egg_info_name)
-    os.makedirs(egg_info, exist_ok=True)
-
-    make_metadata(proj, metadata_file=os.path.join(egg_info, "PKG-INFO"))
-    make_entry_points_txt(proj, metadata_dir=egg_info)
-    make_top_level_txt(proj, metadata_dir=egg_info)
-    make_requires_txt(proj, egg_info=egg_info)  # egg-info specific
+def make_direct_url(proj: Project, metadata_dir: str) -> list[tuple[str, int]]:
+    # https://packaging.python.org/en/latest/specifications/direct-url/
+    contents = '{"url":"file://%s","dir_info":{"editable":true}}' % proj.path
+    with open(os.path.join(metadata_dir, "direct_url.json"), "w") as f:
+        assert '"' not in proj.path and "\\" not in proj.path
+        f.write(contents)
+    return [(os.path.join(metadata_dir, "direct_url.json"), len(contents))]
 
 
-def make_egg_link(proj: Project, site_package: str) -> None:
-    with open(os.path.join(site_package, f"{proj.canonical_name}.egg-link"), "w") as f:
-        f.write(f"{proj.path}\n.")
+def make_record(record: list[tuple[str, int]], metadata_dir: str) -> None:
+    # https://packaging.python.org/en/latest/specifications/recording-installed-packages/#the-record-file
+    base = os.path.dirname(metadata_dir)
+    with open(os.path.join(metadata_dir, "RECORD"), "w") as f:
+        for path, size in record:
+            path = os.path.relpath(path, base)
+            assert "," not in path
+            f.write(f"{path},,{size}\n")
+
+        record_path = os.path.join(metadata_dir, 'RECORD')
+        record_path = os.path.relpath(record_path, base)
+        f.write(f"{record_path},,\n")
 
 
-def install_entry_points(proj: Project, python: str) -> None:
-    # https://setuptools.pypa.io/en/latest/userguide/entry_point.html#console-scripts
-    assert len(sys.executable) < 100 and " " not in sys.executable
-    shebang = f"#!{sys.executable}"
+def make_dist(proj: Project, python: str) -> None:
+    record = []
+    record += make_pth(proj, python)
+    record += make_entry_points(proj, python)
 
-    for script_name, entry in proj.project.get("scripts", {}).items():
-        prefix, suffix = entry.split(":", 1)
-        module = prefix
-        import_name = suffix.split(".")[0]
-        func = suffix
-        contents = rf"""{shebang}
-# -*- coding: utf-8 -*-
-import re
-import sys
-from {module} import {import_name}
-if __name__ == '__main__':
-    sys.argv[0] = re.sub(r'(-script\.pyw|\.exe)?$', '', sys.argv[0])
-    sys.exit({func}())
-"""
-        script = os.path.join(get_bin(python), script_name)
-        try:
-            os.unlink(script)
-        except FileNotFoundError:
-            pass
-        with open(script, "w") as f:
-            f.write(contents)
-        os.chmod(script, (os.stat(script).st_mode | 0o555) & 0o7777)
+    dist_info_name = f"{proj.canonical_name}-{proj.version}.dist-info"
+    dist_info = os.path.join(get_purelib(python), dist_info_name)
+    os.makedirs(dist_info, exist_ok=True)
+
+    record += make_metadata(proj, metadata_dir=dist_info)
+    record += make_entry_points_txt(proj, metadata_dir=dist_info)
+    record += make_top_level_txt(proj, metadata_dir=dist_info)
+
+    record += make_installer(proj, metadata_dir=dist_info)
+    record += make_direct_url(proj, metadata_dir=dist_info)
+
+    make_record(record, metadata_dir=dist_info)
 
 
 def install_proj(proj: Project, python: str) -> None:
     # Handle dependencies
     install_pypi([Requirement(req_str) for req_str in proj.project.get("dependencies", {})], python)
 
-    # Do an egg-info install. Faster than faking a dist-info, plus we have faster startup if all
-    # editables are written to a single pth file.
     print(f"Installing {proj.name}...", file=sys.stderr)
-    make_egg_info(proj)
-    install_entry_points(proj, python)
-    make_egg_link(proj, get_purelib(python))
-
-    # Write to easy-install.pth to actually install the project
-    new_pth_entries = [proj.path]
-    pth = os.path.join(get_purelib(python), "easy-install.pth")
-    if os.path.exists(pth):
-        with open(pth) as f:
-            old_pth_entries = f.read().splitlines()
-    else:
-        old_pth_entries = []
-
-    # Don't do clever removal of things from pth; just put newer pth entries first.
-    # (Note that pip commands will mess with this order, but pip has fancier and
-    # slower logic that should preserve semantics)
-    contents = list(new_pth_entries)
-    for p in old_pth_entries:
-        # Note that new_pth_entries will never contain executable pth entries, so this is fine
-        if p not in new_pth_entries:
-            contents.append(p)
-    contents_str = "\n".join(contents) + "\n"
-
-    uid = "".join(random.choices("0123456789abcdefghijklmnopqrstuvwxyz", k=8))
-    tmp_pth = f"{uid}.pth.tmp"
-    with open(tmp_pth, "w") as f:
-        f.write(contents_str)
-    os.replace(tmp_pth, pth)
+    make_dist(proj, python)
 
 
 def _merge_reqs(reqs: list[Requirement]) -> Requirement:
