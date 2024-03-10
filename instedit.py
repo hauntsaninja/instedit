@@ -26,6 +26,72 @@ def canonical_name(name: str) -> str:
     return re.sub(r"[-_.]+", "-", name).lower()
 
 
+def get_project_from_setup_py(path: str) -> dict[str, Any] | None:
+    import ast
+
+    try:
+        with open(os.path.join(path, "setup.py")) as f:
+            tree = ast.parse(f.read())
+    except FileNotFoundError:
+        return None
+
+    # For something more complete, see:
+    # https://github.com/python-poetry/poetry/blob/main/src/poetry/utils/setup_reader.py
+    setup_vars = {}
+    setup_call = None
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Call) and (
+            isinstance(node.func, ast.Name)
+            and node.func.id == "setup"
+            or (
+                isinstance(node.func, ast.Attribute)
+                and isinstance(node.func.value, ast.Name)
+                and node.func.value.id == "setuptools"
+                and node.func.attr == "setup"
+            )
+        ):
+            setup_call = node
+
+        if isinstance(node, ast.Assign):
+            for var in node.targets:
+                if isinstance(var, ast.Name):
+                    setup_vars[var.id] = node.value
+
+    if setup_call is None:
+        return None
+
+    def entry_points_parser(x: dict[str, Any]) -> dict[str, str]:
+        return dict(script.split("=", maxsplit=1) for script in x.get("console_scripts", []))
+
+    def extras_require_parser(x: dict[str, Any]) -> dict[str, list[str]]:
+        return {k: ([v] if isinstance(v, str) else v) for k, v in x.items() if v}
+
+    setup_parser = {
+        "name": ("name", lambda x: x),
+        "version": ("version", lambda x: x),
+        "description": ("description", lambda x: x),
+        "entry_points": ("scripts", entry_points_parser),
+        "install_requires": ("dependencies", lambda x: x),
+        "extras_require": ("optional-dependencies", extras_require_parser),
+        "python_requires": ("requires-python", lambda x: x),
+        "classifiers": ("classifiers", lambda x: x),
+    }
+
+    ret = {}
+    for key in setup_call.keywords:
+        if key.arg in setup_parser:
+            try:
+                value = key.value
+                if isinstance(value, ast.Name) and value.id in setup_vars:
+                    value = setup_vars[value.id]
+                value = ast.literal_eval(value)
+            except ValueError:
+                continue
+            name, parser = setup_parser[key.arg]
+            ret[name] = parser(value)
+    return ret
+
+
 class Project:
     def __init__(self, path: str) -> None:
         assert os.path.isabs(path)
@@ -33,14 +99,17 @@ class Project:
 
     @functools.cached_property
     def project(self) -> dict[str, Any]:
-        with open(os.path.join(self.path, "pyproject.toml")) as f:
-            pyproj = tomllib.loads(f.read())
-        if "project" not in pyproj:
-            raise ValueError("pyproject.toml is missing [project] table")
-        project = pyproj["project"]
-        if "name" not in project:
-            raise ValueError("pyproject.toml is missing 'name' in [project] table")
-        return project
+        try:
+            with open(os.path.join(self.path, "pyproject.toml")) as f:
+                pyproj = tomllib.loads(f.read())
+            if "project" in pyproj and "name" in pyproj["project"]:
+                return pyproj["project"]
+        except FileNotFoundError:
+            pass
+        proj = get_project_from_setup_py(self.path)
+        if proj is not None and "name" in proj:
+            return proj
+        raise RuntimeError(f"Failed to determine project metadata in {self.path}")
 
     @property
     def name(self) -> str:
