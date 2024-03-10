@@ -86,11 +86,8 @@ def get_purelib(python: str) -> str:
                     pyname = p.name
                     break
             else:
-                cmd = [
-                    python,
-                    "-c",
-                    'import sys; print(f"{sys.version_info[0]}.{sys.version_info[1]}")',
-                ]
+                prog = 'import sys; print(f"{sys.version_info[0]}.{sys.version_info[1]}")'
+                cmd = [python, "-c", prog]
                 pyname = subprocess.check_output(cmd).decode().strip()
 
     return os.path.join(base, "lib", pyname, "site-packages")
@@ -235,7 +232,7 @@ def make_record(record: list[tuple[str, int]], metadata_dir: str) -> None:
             assert "," not in path
             f.write(f"{path},,{size}\n")
 
-        record_path = os.path.join(metadata_dir, 'RECORD')
+        record_path = os.path.join(metadata_dir, "RECORD")
         record_path = os.path.relpath(record_path, base)
         f.write(f"{record_path},,\n")
 
