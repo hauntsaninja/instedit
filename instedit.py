@@ -55,6 +55,18 @@ class Project:
     def canonical_name(self) -> str:
         return canonical_name(self.name)
 
+    @property
+    def dependencies(self) -> list[str]:
+        return self.project.get("dependencies", [])
+
+    @property
+    def optional_dependencies(self) -> dict[str, list[str]]:
+        return self.project.get("optional-dependencies", {})
+
+    @property
+    def scripts(self) -> dict[str, str]:
+        return self.project.get("scripts", {})
+
 
 def get_prefix(python: str) -> str:
     return os.path.dirname(os.path.dirname(python))
@@ -107,7 +119,7 @@ def make_entry_points(proj: Project, python: str) -> list[tuple[str, int]]:
     shebang = f"#!{python}"
 
     ret = []
-    for script_name, entry in proj.project.get("scripts", {}).items():
+    for script_name, entry in proj.scripts.items():
         prefix, suffix = entry.split(":", 1)
         module = prefix
         import_name = suffix.split(".")[0]
@@ -143,12 +155,13 @@ def make_metadata(proj: Project, metadata_dir: str) -> list[tuple[str, int]]:
         contents.append(f"Summary: {summary}")
     if requires_python := proj.project.get("requires-python"):
         contents.append(f"Requires-Python: {requires_python}")
-    for req in proj.project.get("dependencies", []):
-        contents.append(f"Requires-Dist: {req}")
-    for extra, deps in proj.project.get("optional-dependencies", {}).items():
+    for req_str in proj.dependencies:
+        contents.append(f"Requires-Dist: {req_str}")
+    for extra, deps in proj.optional_dependencies.items():
         extra = canonical_name(extra)  # PEP 685
         contents.append(f"Provides-Extra: {extra}")
-        for req in deps:
+        for req_str in deps:
+            req = Requirement(req_str)
             marker = packaging.markers.Marker("extra == '{extra}'")
             if req.marker is None:
                 req.marker = marker
@@ -166,7 +179,7 @@ def make_metadata(proj: Project, metadata_dir: str) -> list[tuple[str, int]]:
 def make_entry_points_txt(proj: Project, metadata_dir: str) -> list[tuple[str, int]]:
     # https://packaging.python.org/en/latest/specifications/entry-points/
     contents = []
-    if scripts := proj.project.get("scripts"):
+    if scripts := proj.scripts:
         contents.append("[console_scripts]\n")
         for key, entry in scripts.items():
             contents.append(f"{key} = {entry}\n")
@@ -258,7 +271,7 @@ def make_dist(proj: Project, python: str) -> None:
 
 def install_proj(proj: Project, python: str) -> None:
     # Handle dependencies
-    install_pypi([Requirement(req_str) for req_str in proj.project.get("dependencies", {})], python)
+    install_pypi([Requirement(req_str) for req_str in proj.dependencies], python)
 
     print(f"Installing {proj.name}...", file=sys.stderr)
     make_dist(proj, python)
