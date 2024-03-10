@@ -518,7 +518,7 @@ def install_pypi(pypi_deps: list[Requirement], python: str) -> None:
 
 def main() -> None:
     parser = argparse.ArgumentParser()
-    parser.add_argument("path", help="Path to the project to install")
+    parser.add_argument("path", nargs="?", default=".", help="Path to the project to install")
     parser.add_argument("--python", help="Python to install to")
     args = parser.parse_args()
 
