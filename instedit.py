@@ -92,6 +92,10 @@ def get_project_from_setup_py(path: str) -> dict[str, Any] | None:
     return ret
 
 
+class InstEditError(Exception):
+    pass
+
+
 class Project:
     def __init__(self, path: str) -> None:
         assert os.path.isabs(path)
@@ -109,7 +113,7 @@ class Project:
         proj = get_project_from_setup_py(self.path)
         if proj is not None and "name" in proj:
             return proj
-        raise RuntimeError(f"Failed to determine project metadata in {self.path}")
+        raise InstEditError(f"Failed to determine project metadata in {self.path}")
 
     @property
     def name(self) -> str:
@@ -518,8 +522,13 @@ def install_pypi(pypi_deps: list[Requirement], python: str) -> None:
 
 def main() -> None:
     parser = argparse.ArgumentParser()
-    parser.add_argument("path", nargs="?", default=".", help="Path to the project to install")
-    parser.add_argument("--python", help="Python to install to")
+    parser.add_argument(
+        "path", nargs="?", default=".", help="Path to the project to install editably"
+    )
+    parser.add_argument(
+        "--python",
+        help="Python to install to (defaults to Python from VIRTUAL_ENV if set, otherwise sys.executable)",
+    )
     args = parser.parse_args()
 
     path = os.path.abspath(args.path)
@@ -535,7 +544,11 @@ def main() -> None:
             python = sys.executable
     python = os.path.abspath(python)
 
-    install_proj(Project(path), python)
+    try:
+        install_proj(Project(path), python)
+    except InstEditError as e:
+        print(e, file=sys.stderr)
+        sys.exit(1)
 
 
 if __name__ == "__main__":
