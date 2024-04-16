@@ -140,6 +140,13 @@ class Project:
     def scripts(self) -> dict[str, str]:
         return self.project.get("scripts", {})
 
+    @property
+    def install_path(self) -> str:
+        src_dir = os.path.join(self.path, "src")
+        if os.path.isdir(src_dir):
+            return src_dir
+        return self.path
+
 
 def get_prefix(python: str) -> str:
     return os.path.dirname(os.path.dirname(python))
@@ -180,7 +187,7 @@ def get_purelib(python: str) -> str:
 
 def make_pth(proj: Project, python: str) -> list[tuple[str, int]]:
     pth = os.path.join(get_purelib(python), proj.canonical_name + ".pth")
-    contents = proj.path + "\n"
+    contents = proj.install_path + "\n"
     with open(pth, "w") as f:
         f.write(contents)
     return [(pth, len(contents))]
