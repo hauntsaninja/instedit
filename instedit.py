@@ -508,10 +508,8 @@ def uninstall(dists: list[str], python: str) -> None:
     if not dists:
         return
 
-    env = os.environ.copy()
     if shutil.which("uv"):
-        env["VIRTUAL_ENV"] = get_prefix(python)
-        cmd = ["uv", "pip", "uninstall", *dists]
+        cmd = ["uv", "pip", "--python", python, "uninstall", *dists]
     else:
         pip = os.path.join(get_bin(python), "pip")
         if os.path.exists(pip):
@@ -522,7 +520,7 @@ def uninstall(dists: list[str], python: str) -> None:
         cmd += ["uninstall", "--yes", *dists]
 
     print("Running:", shlex.join(cmd), file=sys.stderr)
-    subprocess.run(cmd, env=env, check=True)
+    subprocess.run(cmd, check=True)
 
 
 def install_pypi(pypi_deps: list[Requirement], python: str, installed: dict[str, Version] | None) -> None:
@@ -533,11 +531,9 @@ def install_pypi(pypi_deps: list[Requirement], python: str, installed: dict[str,
     if not to_install:
         return
 
-    env = os.environ.copy()
     if shutil.which("uv"):
         # If we have uv maybe we don't need to bother with _filter_satisfied_requirements
-        env["VIRTUAL_ENV"] = get_prefix(python)
-        cmd = ["uv", "pip", "install"]
+        cmd = ["uv", "pip", "--python", python, "install"]
     else:
         pip = os.path.join(get_bin(python), "pip")
         if os.path.exists(pip):
@@ -550,7 +546,7 @@ def install_pypi(pypi_deps: list[Requirement], python: str, installed: dict[str,
         cmd.append(str(req))
 
     print("Running:", shlex.join(cmd), file=sys.stderr)
-    subprocess.run(cmd, env=env, check=True)
+    subprocess.run(cmd, check=True)
 
 
 def main() -> None:
