@@ -343,8 +343,12 @@ def make_dist(proj: Project, python: str) -> None:
 
 
 def install_proj(proj: Project, python: str) -> None:
+    installed = _get_purelib_installed_dists(python)
+    if proj.canonical_name in installed:
+        uninstall([proj.canonical_name], python)
+
     # Handle dependencies
-    install_pypi([Requirement(req_str) for req_str in proj.dependencies], python)
+    install_pypi([Requirement(req_str) for req_str in proj.dependencies], python, installed)
 
     print(f"Installing {proj.name}...", file=sys.stderr)
     make_dist(proj, python)
@@ -414,9 +418,9 @@ def _get_purelib_installed_dists(python: str) -> dict[str, _InstalledDist]:
     return installed
 
 
-def _filter_satisfied_requirements(reqs: list[Requirement], python: str) -> list[Requirement]:
-
-    installed = _get_purelib_installed_dists(python)
+def _filter_satisfied_requirements(
+    reqs: list[Requirement], python: str, installed: dict[str, Version]
+) -> list[Requirement]:
 
     def is_base_installed(req: Requirement) -> bool:
         if req.marker is not None:
@@ -493,11 +497,32 @@ def _filter_satisfied_requirements(reqs: list[Requirement], python: str) -> list
     return to_install
 
 
-def install_pypi(pypi_deps: list[Requirement], python: str) -> None:
+def uninstall(dists: list[str], python: str) -> None:
+    if not dists:
+        return
+
+    env = os.environ.copy()
+    if shutil.which("uv"):
+        env["VIRTUAL_ENV"] = get_prefix(python)
+        cmd = ["uv", "pip", "uninstall", *dists]
+    else:
+        pip = os.path.join(get_bin(python), "pip")
+        if os.path.exists(pip):
+            cmd = [python, "-m", "pip"]
+        else:
+            cmd = [sys.executable, "-m", "pip", "--python", python]
+        cmd += ["--disable-pip-version-check", "--progress-bar=off"]
+        cmd += ["uninstall", "--yes", *dists]
+
+    print("Running:", shlex.join(cmd), file=sys.stderr)
+    subprocess.run(cmd, env=env, check=True)
+
+
+def install_pypi(pypi_deps: list[Requirement], python: str, installed: dict[str, Version] | None) -> None:
     if not pypi_deps:
         return
 
-    to_install = _filter_satisfied_requirements(pypi_deps, python)
+    to_install = _filter_satisfied_requirements(pypi_deps, python, installed)
     if not to_install:
         return
 
@@ -512,7 +537,8 @@ def install_pypi(pypi_deps: list[Requirement], python: str) -> None:
             cmd = [python, "-m", "pip"]
         else:
             cmd = [sys.executable, "-m", "pip", "--python", python]
-        cmd += ["install", "--disable-pip-version-check", "--progress-bar=off"]
+        cmd += ["--disable-pip-version-check", "--progress-bar=off"]
+        cmd += ["install"]
     for req in to_install:
         cmd.append(str(req))
 
