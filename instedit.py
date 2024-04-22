@@ -509,7 +509,7 @@ def uninstall(dists: list[str], python: str) -> None:
         return
 
     if shutil.which("uv"):
-        cmd = ["uv", "pip", "--python", python, "uninstall", *dists]
+        cmd = ["uv", "pip", "uninstall", "--python", python, *dists]
     else:
         pip = os.path.join(get_bin(python), "pip")
         if os.path.exists(pip):
