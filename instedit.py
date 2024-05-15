@@ -533,7 +533,7 @@ def install_pypi(pypi_deps: list[Requirement], python: str, installed: dict[str,
 
     if shutil.which("uv"):
         # If we have uv maybe we don't need to bother with _filter_satisfied_requirements
-        cmd = ["uv", "pip", "--python", python, "install"]
+        cmd = ["uv", "pip", "install", "--python", python]
     else:
         pip = os.path.join(get_bin(python), "pip")
         if os.path.exists(pip):
