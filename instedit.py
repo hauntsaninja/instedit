@@ -335,7 +335,7 @@ def make_dist(proj: Project, python: str) -> None:
     record += make_pth(proj, python)
     record += make_entry_points(proj, python)
 
-    dist_info_name = f"{proj.canonical_name}-{proj.version}.dist-info"
+    dist_info_name = f"{proj.canonical_name.replace('-', '_')}-{proj.version}.dist-info"
     dist_info = os.path.join(get_purelib(python), dist_info_name)
     os.makedirs(dist_info, exist_ok=True)
 
