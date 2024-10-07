@@ -247,7 +247,7 @@ def make_metadata(proj: Project, metadata_dir: str) -> list[tuple[str, int]]:
                 req.marker = marker
             else:
                 req.marker._markers = [req.marker._markers, "and", marker._markers]
-            contents.append(f"Requires-Dist: [{extra}] {req}")
+            contents.append(f"Requires-Dist: {req}")
     contents.append("\nUNKNOWN BODY\n")
 
     contents_str = "\n".join(contents) + "\n"
